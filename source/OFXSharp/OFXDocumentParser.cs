@@ -1,289 +1,317 @@
-﻿using System;
+﻿using Sgml;
+
+using System;
 using System.Collections.Generic;
 using System.IO;
-using System.Xml;
-using Sgml;
 using System.Text;
+using System.Xml;
 
 namespace OFXSharp
 {
-   public class OFXDocumentParser
-   {
-      public OFXDocument Import(FileStream stream)
-      {
-         using (var reader = new StreamReader(stream, Encoding.Default))
-         {
-            return Import(reader.ReadToEnd());
-         }
-      }
+    public class OfxDocumentParser
+    {
+        public OfxDocument Import(FileStream stream)
+        {
+            using (var reader = new StreamReader(stream, Encoding.Default))
+            {
+                return Import(reader.ReadToEnd());
+            }
+        }
 
-      public OFXDocument Import(string ofx)
-      {
-         return ParseOfxDocument(ofx);
-      }
+        public OfxDocument Import(string ofx)
+        {
+            return ParseOfxDocument(ofx);
+        }
 
-      private OFXDocument ParseOfxDocument(string ofxString)
-      {
-         //If OFX file in SGML format, convert to XML
-         if (!IsXmlVersion(ofxString))
-         {
-            ofxString = SGMLToXML(ofxString);
-         }
+        private OfxDocument ParseOfxDocument(string ofxString)
+        {
+            //If OFX file in SGML format, convert to XML
+            if (!IsXmlVersion(ofxString))
+            {
+                ofxString = SgmlToXml(ofxString);
+            }
 
-         return Parse(ofxString);
-      }
+            return Parse(ofxString);
+        }
 
-      private OFXDocument Parse(string ofxString)
-      {
-         var ofx = new OFXDocument {AccType = GetAccountType(ofxString)};
+        /// <summary>
+        /// Parse
+        /// </summary>
+        /// <param name="ofxString">OFX String</param>
+        /// <returns>OFX Document</returns>
+        private OfxDocument Parse(string ofxString)
+        {
+            var ofx = new OfxDocument { AccType = GetAccountType(ofxString) };
 
-         //Load into xml document
-         var doc = new XmlDocument();
-         doc.Load(new StringReader(ofxString));
+            using (var stringReader = new StringReader(ofxString))
+            {
+                var doc = new XmlDocument();
+                doc.Load(stringReader);
 
-         var currencyNode = doc.SelectSingleNode(GetXPath(ofx.AccType, OFXSection.CURRENCY));
+                ofx.Currency = GetCurrency(doc, ofx.AccType);
+                ofx.SignOn = GetSignOn(doc);
+                ofx.Account = GetAccount(doc, ofx.AccType);
+                ImportTransactions(ofx, doc);
+                ofx.Balance = GetBalance(doc, ofx.AccType);
+            }
 
-         if (currencyNode != null)
-         {
-            ofx.Currency = currencyNode.FirstChild.Value;
-         }
-         else
-         {
-            throw new OFXParseException("Currency not found");
-         }
+            return ofx;
+        }
 
-         //Get sign on node from OFX file
-         var signOnNode = doc.SelectSingleNode(Resources.SignOn);
+        /// <summary>
+        /// Get Currency
+        /// </summary>
+        /// <param name="doc">XML Document</param>
+        /// <param name="accType">Account Type</param>
+        /// <returns>Currency</returns>
+        /// <exception cref="OfxParseException"></exception>
+        private string GetCurrency(XmlDocument doc, AccountType accType)
+        {
+            var currencyNode = doc.SelectSingleNode(GetXPath(accType, OfxSection.CURRENCY));
+            if (currencyNode != null)
+            {
+                return currencyNode.FirstChild.Value;
+            }
+            throw new OfxParseException("Currency not found");
+        }
 
-         //If exists, populate signon obj, else throw parse error
-         if (signOnNode != null)
-         {
-            ofx.SignOn = new SignOn(signOnNode);
-         }
-         else
-         {
-            throw new OFXParseException("Sign On information not found");
-         }
+        /// <summary>
+        /// Get Sign On
+        /// </summary>
+        /// <param name="doc">XML Document</param>
+        /// <returns>Sign On</returns>
+        /// <exception cref="OfxParseException"></exception>
+        private SignOn GetSignOn(XmlDocument doc)
+        {
+            var signOnNode = doc.SelectSingleNode(Resources.SignOn);
+            if (signOnNode != null)
+            {
+                return new SignOn(signOnNode);
+            }
+            throw new OfxParseException("Sign On information not found");
+        }
 
-         //Get Account information for ofx doc
-         var accountNode = doc.SelectSingleNode(GetXPath(ofx.AccType, OFXSection.ACCOUNTINFO));
+        /// <summary>
+        /// Get Account
+        /// </summary>
+        /// <param name="doc">XML Document</param>
+        /// <param name="accType">Account Type</param>
+        /// <returns>Account</returns>
+        /// <exception cref="OfxParseException"></exception>
+        private Account GetAccount(XmlDocument doc, AccountType accType)
+        {
+            var accountNode = doc.SelectSingleNode(GetXPath(accType, OfxSection.ACCOUNTINFO));
+            if (accountNode != null)
+            {
+                return new Account(accountNode, accType);
+            }
+            throw new OfxParseException("Account information not found");
+        }
 
-         //If account info present, populate account object
-         if (accountNode != null)
-         {
-            ofx.Account = new Account(accountNode, ofx.AccType);
-         }
-         else
-         {
-            throw new OFXParseException("Account information not found");
-         }
+        /// <summary>
+        /// Get Balance
+        /// </summary>
+        /// <param name="doc">XML Document</param>
+        /// <param name="accType">Account Type</param>
+        /// <returns>Balance</returns>
+        /// <exception cref="OfxParseException"></exception>
+        private Balance GetBalance(XmlDocument doc, AccountType accType)
+        {
+            var ledgerNode = doc.SelectSingleNode(GetXPath(accType, OfxSection.BALANCE) + "/LEDGERBAL");
+            var availableNode = doc.SelectSingleNode(GetXPath(accType, OfxSection.BALANCE) + "/AVAILBAL");
 
-         //Get list of transactions
-         ImportTransations(ofx, doc);
+            if (ledgerNode != null) // && availableNode != null
+            {
+                return new Balance(ledgerNode, availableNode);
+            }
+            throw new OfxParseException("Balance information not found");
+        }
 
-         //Get balance info from ofx doc
-         var ledgerNode = doc.SelectSingleNode(GetXPath(ofx.AccType, OFXSection.BALANCE) + "/LEDGERBAL");
-         var avaliableNode = doc.SelectSingleNode(GetXPath(ofx.AccType, OFXSection.BALANCE) + "/AVAILBAL");
+        /// <summary>
+        /// Returns the correct xpath to specified section for given account type
+        /// </summary>
+        /// <param name="type">Account type</param>
+        /// <param name="section">Section of OFX document, e.g. Transaction Section</param>
+        /// <exception cref="OfxException">Thrown in account type not supported</exception>
+        private string GetXPath(AccountType type, OfxSection section)
+        {
+            string xpath, accountInfo;
 
-         //If balance info present, populate balance object
-         // ***** OFX files from my bank don't have the 'avaliableNode' node, so i manage a 'null' situation
-         if (ledgerNode != null) // && avaliableNode != null
-         {
-            ofx.Balance = new Balance(ledgerNode, avaliableNode);
-         }
-         else
-         {
-            throw new OFXParseException("Balance information not found");
-         }
+            switch (type)
+            {
+                case AccountType.BANK:
+                    xpath = Resources.BankAccount;
+                    accountInfo = "/BANKACCTFROM";
+                    break;
+                case AccountType.CC:
+                    xpath = Resources.CCAccount;
+                    accountInfo = "/CCACCTFROM";
+                    break;
+                default:
+                    throw new OfxException("Account Type not supported. Account type " + type);
+            }
 
-         return ofx;
-      }
+            switch (section)
+            {
+                case OfxSection.ACCOUNTINFO:
+                    return xpath + accountInfo;
+                case OfxSection.BALANCE:
+                    return xpath;
+                case OfxSection.TRANSACTIONS:
+                    return xpath + "/BANKTRANLIST";
+                case OfxSection.SIGNON:
+                    return Resources.SignOn;
+                case OfxSection.CURRENCY:
+                    return xpath + "/CURDEF";
+                default:
+                    throw new OfxException("Unknown section found when retrieving XPath. Section " + section);
+            }
+        }
 
+        /// <summary>
+        /// Returns list of all transactions in OFX document
+        /// </summary>
+        /// <param name="ofxDocument">OFX document</param>
+        /// <param name="doc">XML document</param>
+        /// <returns>List of transactions found in OFX document</returns>
+        private void ImportTransactions(OfxDocument ofxDocument, XmlDocument doc)
+        {
+            var xpath = GetXPath(ofxDocument.AccType, OfxSection.TRANSACTIONS);
 
-      /// <summary>
-      /// Returns the correct xpath to specified section for given account type
-      /// </summary>
-      /// <param name="type">Account type</param>
-      /// <param name="section">Section of OFX document, e.g. Transaction Section</param>
-      /// <exception cref="OFXException">Thrown in account type not supported</exception>
-      private string GetXPath(AccountType type, OFXSection section)
-      {
-         string xpath, accountInfo;
+            ofxDocument.StatementStart = doc.GetValue(xpath + "//DTSTART").ToDate();
+            ofxDocument.StatementEnd = doc.GetValue(xpath + "//DTEND").ToDate();
 
-         switch (type)
-         {
-            case AccountType.BANK:
-               xpath = Resources.BankAccount;
-               accountInfo = "/BANKACCTFROM";
-               break;
-            case AccountType.CC:
-               xpath = Resources.CCAccount;
-               accountInfo = "/CCACCTFROM";
-               break;
-            default:
-               throw new OFXException("Account Type not supported. Account type " + type);
-         }
+            var transactionNodes = doc.SelectNodes(xpath + "//STMTTRN");
 
-         switch (section)
-         {
-            case OFXSection.ACCOUNTINFO:
-               return xpath + accountInfo;
-            case OFXSection.BALANCE:
-               return xpath;
-            case OFXSection.TRANSACTIONS:
-               return xpath + "/BANKTRANLIST";
-            case OFXSection.SIGNON:
-               return Resources.SignOn;
-            case OFXSection.CURRENCY:
-               return xpath + "/CURDEF";
-            default:
-               throw new OFXException("Unknown section found when retrieving XPath. Section " + section);
-         }
-      }
+            ofxDocument.Transactions = new List<Transaction>();
 
-      /// <summary>
-      /// Returns list of all transactions in OFX document
-      /// </summary>
-      /// <param name="doc">OFX document</param>
-      /// <returns>List of transactions found in OFX document</returns>
-      private void ImportTransations(OFXDocument ofxDocument, XmlDocument doc)
-      {
-         var xpath = GetXPath(ofxDocument.AccType, OFXSection.TRANSACTIONS);
+            if (transactionNodes == null)
+                return;
 
-         ofxDocument.StatementStart = doc.GetValue(xpath + "//DTSTART").ToDate();
-         ofxDocument.StatementEnd = doc.GetValue(xpath + "//DTEND").ToDate();
-
-         var transactionNodes = doc.SelectNodes(xpath + "//STMTTRN");
-
-         ofxDocument.Transactions = new List<Transaction>();
-
-         foreach (XmlNode node in transactionNodes)
-            ofxDocument.Transactions.Add(new Transaction(node, ofxDocument.Currency));
-      }
+            foreach (XmlNode node in transactionNodes)
+                ofxDocument.Transactions.Add(new Transaction(node, ofxDocument.Currency));
+        }
 
 
-      /// <summary>
-      /// Checks account type of supplied file
-      /// </summaryof
-      /// <param name="file">OFX file want to check</param>
-      /// <returns>Account type for account supplied in ofx file</returns>
-      private AccountType GetAccountType(string file)
-      {
-         if (file.IndexOf("<CREDITCARDMSGSRSV1>") != -1)
-            return AccountType.CC;
+        /// <summary>
+        /// Checks account type of supplied file
+        /// </summary>
+        /// <param name="file">OFX file want to check</param>
+        /// <returns>Account type for account supplied in ofx file</returns>
+        private AccountType GetAccountType(string file)
+        {
+            if (file.IndexOf("<CREDITCARDMSGSRSV1>") != -1)
+                return AccountType.CC;
 
-         if (file.IndexOf("<BANKMSGSRSV1>") != -1)
-            return AccountType.BANK;
+            if (file.IndexOf("<BANKMSGSRSV1>") != -1)
+                return AccountType.BANK;
 
-         throw new OFXException("Unsupported Account Type");
-      }
+            throw new OfxException("Unsupported Account Type");
+        }
 
-      /// <summary>
-      /// Check if OFX file is in SGML or XML format
-      /// </summary>
-      /// <param name="file"></param>
-      /// <returns></returns>
-      private bool IsXmlVersion(string file)
-      {
-         return (file.IndexOf("OFXHEADER:100") == -1);
-      }
+        /// <summary>
+        /// Check if OFX file is in SGML or XML format
+        /// </summary>
+        /// <param name="file"></param>
+        /// <returns></returns>
+        private bool IsXmlVersion(string file)
+        {
+            return (file.IndexOf("OFXHEADER:100") == -1);
+        }
 
-      /// <summary>
-      /// Converts SGML to XML
-      /// </summary>
-      /// <param name="file">OFX File (SGML Format)</param>
-      /// <returns>OFX File in XML format</returns>
-      private string SGMLToXML(string file)
-      {
-         var reader = new SgmlReader();
+        /// <summary>
+        /// Converts SGML to XML
+        /// </summary>
+        /// <param name="file">OFX File (SGML Format)</param>
+        /// <returns>OFX File in XML format</returns>
+        private string SgmlToXml(string file)
+        {
+            var reader = new SgmlReader
+            {
+                InputStream = new StringReader(ParseHeader(file)),
+                DocType = "OFX"
+            };
 
-         //Inititialize SGML reader
-         reader.InputStream = new StringReader(ParseHeader(file));
-         reader.DocType = "OFX";
+            var stringBuilder = new StringBuilder();
+            using (var xmlWriter = new XmlTextWriter(new StringWriter(stringBuilder)))
+            {
+                while (!reader.EOF)
+                {
+                    xmlWriter.WriteNode(reader, true);
+                }
+            }
 
-         var sw = new StringWriter();
-         var xml = new XmlTextWriter(sw);
+            var temp = stringBuilder.ToString().TrimStart().Split(new[] { '\n', '\r' }, StringSplitOptions.RemoveEmptyEntries);
+            return string.Join("", temp);
+        }
 
-         //write output of sgml reader to xml text writer
-         while (!reader.EOF)
-            xml.WriteNode(reader, true);
+        /// <summary>
+        /// Checks that the file is supported by checking the header. Removes the header.
+        /// </summary>
+        /// <param name="file">OFX file</param>
+        /// <returns>File, without the header</returns>
+        private string ParseHeader(string file)
+        {
+            //Select header of file and split into array
+            //End of header worked out by finding first instance of '<'
+            //Array split based of new line & carriage return
+            var header = file.Substring(0, file.IndexOf('<'))
+               .Split(new[] { '\n', '\r' }, StringSplitOptions.RemoveEmptyEntries);
 
-         //close xml text writer
-         xml.Flush();
-         xml.Close();
+            //Check that no errors in header
+            CheckHeader(header);
 
-         var temp = sw.ToString().TrimStart().Split(new[] {'\n', '\r'}, StringSplitOptions.RemoveEmptyEntries);
+            //Remove header
+            return file.Substring(file.IndexOf('<')).Trim();
+        }
 
-         return String.Join("", temp);
-      }
+        /// <summary>
+        /// Checks that all the elements in the header are supported
+        /// </summary>
+        /// <param name="header">Header of OFX file in array</param>
+        private void CheckHeader(string[] header)
+        {
+            if (header[0] == "OFXHEADER:100DATA:OFXSGMLVERSION:102SECURITY:NONEENCODING:USASCIICHARSET:1252COMPRESSION:NONEOLDFILEUID:NONENEWFILEUID:NONE")//non delimited header
+                return;
+            if (header[0] != "OFXHEADER:100")
+                throw new OfxParseException("Incorrect header format");
 
-      /// <summary>
-      /// Checks that the file is supported by checking the header. Removes the header.
-      /// </summary>
-      /// <param name="file">OFX file</param>
-      /// <returns>File, without the header</returns>
-      private string ParseHeader(string file)
-      {
-         //Select header of file and split into array
-         //End of header worked out by finding first instance of '<'
-         //Array split based of new line & carrige return
-         var header = file.Substring(0, file.IndexOf('<'))
-            .Split(new[] {'\n', '\r'}, StringSplitOptions.RemoveEmptyEntries);
+            if (header[1] != "DATA:OFXSGML")
+                throw new OfxParseException("Data type unsupported: " + header[1] + ". OFXSGML required");
 
-         //Check that no errors in header
-         CheckHeader(header);
+            if (header[2] != "VERSION:102")
+                throw new OfxParseException("OFX version unsupported. " + header[2]);
 
-         //Remove header
-         return file.Substring(file.IndexOf('<')).Trim();
-      }
+            if (header[3] != "SECURITY:NONE")
+                throw new OfxParseException("OFX security unsupported");
 
-      /// <summary>
-      /// Checks that all the elements in the header are supported
-      /// </summary>
-      /// <param name="header">Header of OFX file in array</param>
-      private void CheckHeader(string[] header)
-      {
-		if (header[0] == "OFXHEADER:100DATA:OFXSGMLVERSION:102SECURITY:NONEENCODING:USASCIICHARSET:1252COMPRESSION:NONEOLDFILEUID:NONENEWFILEUID:NONE")//non delimited header
-			return;
-         if (header[0] != "OFXHEADER:100")
-            throw new OFXParseException("Incorrect header format");
+            if (header[4] != "ENCODING:USASCII")
+                throw new OfxParseException("ASCII Format unsupported:" + header[4]);
 
-         if (header[1] != "DATA:OFXSGML")
-            throw new OFXParseException("Data type unsupported: " + header[1] + ". OFXSGML required");
+            if (header[5] != "CHARSET:1252")
+                throw new OfxParseException("Character set unsupported:" + header[5]);
 
-         if (header[2] != "VERSION:102")
-            throw new OFXParseException("OFX version unsupported. " + header[2]);
+            if (header[6] != "COMPRESSION:NONE")
+                throw new OfxParseException("Compression unsupported");
 
-         if (header[3] != "SECURITY:NONE")
-            throw new OFXParseException("OFX security unsupported");
+            if (header[7] != "OLDFILEUID:NONE")
+                throw new OfxParseException("OLDFILEUID incorrect");
+        }
 
-         if (header[4] != "ENCODING:USASCII")
-            throw new OFXParseException("ASCII Format unsupported:" + header[4]);
+        #region Nested type: OFXSection
 
-         if (header[5] != "CHARSET:1252")
-            throw new OFXParseException("Charecter set unsupported:" + header[5]);
+        /// <summary>
+        /// Section of OFX Document
+        /// </summary>
+        private enum OfxSection
+        {
+            SIGNON,
+            ACCOUNTINFO,
+            TRANSACTIONS,
+            BALANCE,
+            CURRENCY
+        }
 
-         if (header[6] != "COMPRESSION:NONE")
-            throw new OFXParseException("Compression unsupported");
-
-         if (header[7] != "OLDFILEUID:NONE")
-            throw new OFXParseException("OLDFILEUID incorrect");
-      }
-
-      #region Nested type: OFXSection
-
-      /// <summary>
-      /// Section of OFX Document
-      /// </summary>
-      private enum OFXSection
-      {
-         SIGNON,
-         ACCOUNTINFO,
-         TRANSACTIONS,
-         BALANCE,
-         CURRENCY
-      }
-
-      #endregion
-   }
+        #endregion
+    }
 }

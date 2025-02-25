@@ -2,7 +2,7 @@ using System.ComponentModel;
 
 namespace OFXSharp
 {
-    public enum OFXTransactionType
+    public enum OfxTransactionType
     {
         [Description("Basic Credit")]
         CREDIT,

@@ -3,7 +3,7 @@ using System.Collections.Generic;
 
 namespace OFXSharp
 {
-    public class OFXDocument
+    public class OfxDocument
     {
         public DateTime StatementStart { get; set; }
 

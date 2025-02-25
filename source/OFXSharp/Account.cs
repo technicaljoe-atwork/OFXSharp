@@ -5,32 +5,23 @@ namespace OFXSharp
 {
     public class Account
     {
-        public string AccountID { get; set; }
+        public string AccountId { get; set; }
         public string AccountKey { get; set; }
         public AccountType AccountType { get; set; }
 
         #region Bank Only
 
-        private BankAccountType _BankAccountType = BankAccountType.NA;
+        private BankAccountType _bankAccountType = BankAccountType.NA;
 
-        public string BankID { get; set; }
+        public string BankId { get; set; }
 
-        public string BranchID { get; set; }
+        public string BranchId { get; set; }
 
 
         public BankAccountType BankAccountType
         {
-            get
-            {
-                if (AccountType == AccountType.BANK)
-                    return _BankAccountType;
-                
-                return BankAccountType.NA;
-            }
-            set 
-            {
-                _BankAccountType = AccountType == AccountType.BANK ? value : BankAccountType.NA;
-            }
+            get => AccountType == AccountType.BANK ? _bankAccountType : BankAccountType.NA;
+            set => _bankAccountType = AccountType == AccountType.BANK ? value : BankAccountType.NA;
         }
 
         #endregion
@@ -39,7 +30,7 @@ namespace OFXSharp
         {
             AccountType = type;
 
-            AccountID = node.GetValue("//ACCTID");
+            AccountId = node.GetValue("//ACCTID");
             AccountKey = node.GetValue("//ACCTKEY");
 
             switch (AccountType)
@@ -48,12 +39,10 @@ namespace OFXSharp
                     InitializeBank(node);
                     break;
                 case AccountType.AP:
-                    InitializeAP(node);
+                    InitializeAp(node);
                     break;
                 case AccountType.AR:
-                    InitializeAR(node);
-                    break;
-                default:
+                    InitializeAr(node);
                     break;
             }
         }
@@ -63,30 +52,30 @@ namespace OFXSharp
         /// </summary>
         private void InitializeBank(XmlNode node)
         {
-            BankID = node.GetValue("//BANKID");
-            BranchID = node.GetValue("//BRANCHID");
+            BankId = node.GetValue("//BANKID");
+            BranchId = node.GetValue("//BRANCHID");
 
             //Get Bank Account Type from XML
             string bankAccountType = node.GetValue("//ACCTTYPE");
 
             //Check that it has been set
             if (String.IsNullOrEmpty(bankAccountType))
-                throw new OFXParseException("Bank Account type unknown");
+                throw new OfxParseException("Bank Account type unknown");
 
             //Set bank account enum
-            _BankAccountType = bankAccountType.GetBankAccountType();
+            _bankAccountType = bankAccountType.GetBankAccountType();
         }
 
         #region Account types not supported
 
-        private void InitializeAP(XmlNode node)
+        private void InitializeAp(XmlNode node)
         {
-            throw new OFXParseException("AP Account type not supported");
+            throw new OfxParseException("AP Account type not supported");
         }
 
-        private void InitializeAR(XmlNode node)
+        private void InitializeAr(XmlNode node)
         {
-            throw new OFXParseException("AR Account type not supported");
+            throw new OfxParseException("AR Account type not supported");
         }
 
         #endregion
